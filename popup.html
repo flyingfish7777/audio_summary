@@ -10,15 +10,6 @@
   <div class="wrap">
     <h1>🎙️ System/Tab + Mic Recorder</h1>
     <div class="row">
-      <label>捕获来源</label>
-      <select id="source">
-        <option value="system">系统音频（浏览器/系统混音）</option>
-        <option value="current">当前活动标签页</option>
-        <option value="audible">最后一个有声音的标签页</option>
-        <option value="inputDevice">指定音频输入设备（虚拟声卡/回环）</option>
-      </select>
-    </div>
-    <div class="row">
       <button id="btnStart">开始</button>
       <button id="btnStop" disabled>结束</button>
       <button id="btnSave" disabled>保存WAV</button>
@@ -27,22 +18,6 @@
     <div class="row">
       <label>文件名</label>
       <input id="filename" value="recording.wav"/>
-    </div>
-    <fieldset>
-      <legend>AI 配置</legend>
-      <label>SYS_TOKEN</label>
-      <input id="sysToken" placeholder="sys-..."/>
-      <label>APP_TOKEN</label>
-      <input id="appToken" placeholder="app-..."/>
-      <label>MODEL</label>
-      <input id="model" value="语音测试"/>
-      <label>PROMPT</label>
-      <textarea id="prompt" rows="3">请总结这段音频内容，并区分客服与客户要点。</textarea>
-    </fieldset>
-    <div class="row">
-      <label>音频输入设备</label>
-      <select id="audioInput"></select>
-      <button id="btnRefresh">刷新</button>
     </div>
     <div class="row">
       <label>状态</label>

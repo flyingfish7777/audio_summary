@@ -1,5 +1,4 @@
-// 提供: 1) mixToWavBlob(leftChunks, rightChunks, totalSamples, sampleRate)
-//      2) uploadToAI(wavBlob, filename, cfg)
+// 提供: mixToWavBlob(leftChunks, rightChunks, totalSamples, sampleRate)
 (function(){
   function interleaveStereo(leftBuffers, rightBuffers, totalSamples){
     const out = new Float32Array(totalSamples*2);
@@ -45,35 +44,10 @@
   }
   function writeStr(view,off,str){ for(let i=0;i<str.length;i++) view.setUint8(off+i,str.charCodeAt(i)); }
 
-  async function uploadToAI(wavBlob, filename, cfg){
-    const BASE='https://jftool.soa.com.cn';
-    const UPLOAD_URL = BASE.replace(/\/$/,'') + '/api/file/UploadUserFile';
-    const CHAT_URL   = BASE.replace(/\/$/,'') + '/v1/chat/completions';
-
-    // 1) upload
-    const fd=new FormData();
-    fd.append('File', new File([wavBlob], filename, {type:'audio/wav'}));
-    const up = await fetch(UPLOAD_URL, {method:'POST', headers:{'Authorization':`Bearer ${cfg.sysToken}`}, body:fd});
-    const upJ = await up.json();
-    if(!up.ok || upJ.code!=='success') throw new Error('上传失败: '+(upJ.code||up.status));
-    const fileKey = upJ?.data?.FileKey; const retName = upJ?.data?.Name || filename;
-    if(!fileKey) throw new Error('上传成功但未返回 FileKey');
-
-    // 2) chat
-    const body={
-      model: cfg.model,
-      messages:[{role:'user', content:[{Type:'file_s3', Name:retName, Url:fileKey},{Type:'text', Text:cfg.prompt}]}],
-      stream:false
-    };
-    const chat=await fetch(CHAT_URL,{method:'POST', headers:{'Authorization':`Bearer ${cfg.appToken}`,'Content-Type':'application/json; charset=utf-8'}, body:JSON.stringify(body)});
-    const ctype=chat.headers.get('content-type')||'';
-    return ctype.includes('application/json') ? chat.json() : chat.text();
-  }
-
   function mixToWavBlob(leftChunks, rightChunks, totalSamples, sampleRate){
     const inter = interleaveStereo(leftChunks, rightChunks, totalSamples);
     return encodeWavStereo(inter, sampleRate);
   }
 
-  window.WavUtil = { mixToWavBlob, uploadToAI };
+  window.WavUtil = { mixToWavBlob };
 })();
