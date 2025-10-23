@@ -3,11 +3,14 @@
   "name": "System/Tab + Mic Recorder to AI",
   "version": "0.2.0",
   "description": "优先捕获系统/浏览器音频（desktopCapture），失败回退当前标签页（tabCapture），并混合麦克风，导出WAV并上传AI总结。",
-  "permissions": ["desktopCapture", "tabCapture", "storage", "activeTab"],
+  "permissions": ["desktopCapture", "tabCapture", "activeTab"],
   "host_permissions": [
     "https://jftool.soa.com.cn/*",
     "https://agent-bj.clink.cn/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_title": "System/Tab + Mic Recorder",
     "default_popup": "popup.html"
