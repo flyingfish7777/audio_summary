@@ -11,13 +11,12 @@ let rightChunks = [];
 let totalSamples = 0;
 let sr = 48000;
 
-const SYS_TOKEN = "sys-HraOJjmzXprcFP5iEO1sfkKenzxFKqD3tY6GhZtSgQOwW8gunMcQSn67d1a8AkEW";
-const APP_TOKEN = "app-ia5iGfz0nHXBIQ317p0oTm5Js0spvUZOjIPLrqyLzaIto3HF7Ud0ElKMheuVKg0u";
-const MODEL = "语音测试";
-const DEFAULT_PROMPT = "请总结这段音频内容，并区分客服与客户要点。";
-const BASE = "https://jftool.soa.com.cn";
-const UPLOAD_URL = BASE.replace(/\/$/, "") + "/api/file/UploadUserFile";
-const CHAT_URL = BASE.replace(/\/$/, "") + "/v1/chat/completions";
+const {
+  DEFAULT_PROMPT,
+  formatSummaryResult,
+  uploadAudioBuffer,
+  requestSummary
+} = ApiHelpers;
 
 const $ = (id) => document.getElementById(id);
 const btnStart = $('btnStart');
@@ -202,65 +201,19 @@ async function upload(){
       throw new Error(resp && resp.error ? resp.error : '上传失败');
     }
     const result = resp.result;
-    outEl.value = typeof result==='string'? result : JSON.stringify(result, null, 2);
+    outEl.value = resp.text || formatSummaryResult(result);
     setStatus('完成');
   }catch(e){ alert('上传/总结失败：'+(e && e.message? e.message : e)); setStatus('失败'); }
 }
 
 async function uploadDirectly(filename, audioBuffer) {
-  const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' });
-  const formData = new FormData();
-  formData.append('File', new File([audioBlob], filename, { type: 'audio/wav' }));
-
-  const uploadResponse = await fetch(UPLOAD_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${SYS_TOKEN}`
-    },
-    body: formData
-  });
-
-  const uploadJson = await uploadResponse.json();
-  if (!uploadResponse.ok || uploadJson.code !== 'success') {
-    return { ok: false, error: `上传失败: ${uploadJson.code || uploadResponse.status}` };
+  try {
+    const { audioContent } = await uploadAudioBuffer(audioBuffer, filename);
+    const result = await requestSummary(audioContent, DEFAULT_PROMPT);
+    return { ok: true, result, text: formatSummaryResult(result) };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
   }
-
-  const fileKey = uploadJson?.data?.FileKey;
-  const returnedName = uploadJson?.data?.Name || filename;
-  if (!fileKey) {
-    return { ok: false, error: '上传成功但未返回 FileKey' };
-  }
-
-  const chatBody = {
-    model: MODEL,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { Type: 'file_s3', Name: returnedName, Url: fileKey },
-          { Type: 'text', Text: DEFAULT_PROMPT }
-        ]
-      }
-    ],
-    stream: false
-  };
-
-  const chatResponse = await fetch(CHAT_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${APP_TOKEN}`,
-      'Content-Type': 'application/json; charset=utf-8'
-    },
-    body: JSON.stringify(chatBody)
-  });
-
-  const contentType = chatResponse.headers.get('content-type') || '';
-  const result = contentType.includes('application/json') ? await chatResponse.json() : await chatResponse.text();
-  if (!chatResponse.ok) {
-    const msg = typeof result === 'string' ? result : JSON.stringify(result);
-    return { ok: false, error: `总结失败: ${chatResponse.status} ${msg}`.trim() };
-  }
-  return { ok: true, result };
 }
 
 btnStart.addEventListener('click', start);
