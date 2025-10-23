@@ -20,28 +20,49 @@
     "fail.uploaded.file.size": "文件大小超过限制。"
   };
 
+  function normalizeAudioUrl(info, fileKey) {
+    const candidates = [info.Url, info.FileUrl, info.UrlPath, info.Path];
+    for (const value of candidates) {
+      if (!value) continue;
+      if (/^https?:\/\//i.test(value)) {
+        return value;
+      }
+      if (typeof value === "string" && value.startsWith("/")) {
+        return BASE.replace(/\/$/, "") + value;
+      }
+    }
+    return fileKey || null;
+  }
+
   function buildAudioContent(uploadData, fallbackName) {
     const info = uploadData || {};
     const fileKey = info.FileKey || info.FileId || info.Key;
-    const fileUrl = info.Url || info.FileUrl || info.UrlPath || info.Path;
-    if (!fileKey && !fileUrl) {
+    const audioUrl = normalizeAudioUrl(info, fileKey);
+
+    if (!fileKey && !audioUrl) {
       throw new Error("上传成功但未返回可用的文件标识");
     }
 
     const audioPayload = {
       Type: "file_s3",
       Name: info.Name || fallbackName,
-      Url: fileUrl || fileKey,
-      FileKey: fileKey,
-      FileId: info.FileId,
+      Url: audioUrl,
       MimeType: info.MimeType || "audio/wav"
     };
+
+    if (fileKey) {
+      audioPayload.FileKey = fileKey;
+    }
+    if (info.FileId && info.FileId !== fileKey) {
+      audioPayload.FileId = info.FileId;
+    }
 
     Object.keys(audioPayload).forEach((key) => {
       if (audioPayload[key] === undefined || audioPayload[key] === null) {
         delete audioPayload[key];
       }
     });
+
     return audioPayload;
   }
 
