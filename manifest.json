@@ -14,5 +14,11 @@
   "action": {
     "default_title": "System/Tab + Mic Recorder",
     "default_popup": "popup.html"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["recorder-worklet.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

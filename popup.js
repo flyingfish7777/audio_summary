@@ -4,8 +4,8 @@ let audioCtx = null;
 let micStream = null;
 let tabStream = null;
 let merger = null;
-let dest = null;
-let processor = null;
+let recorderNode = null;
+let silentGain = null;
 let leftChunks = [];
 let rightChunks = [];
 let totalSamples = 0;
@@ -40,6 +40,13 @@ function captureCurrentTabAudio(){
   });
 }
 
+function ensureRightChannelArray(sourceArray, desiredLength){
+  if (sourceArray && sourceArray.length === desiredLength) {
+    return sourceArray;
+  }
+  return new Float32Array(desiredLength);
+}
+
 async function start(){
   try{
     setStatus('请求权限/初始化…');
@@ -60,6 +67,12 @@ async function start(){
     }
 
     audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    if (!audioCtx.audioWorklet) {
+      throw new Error('当前环境不支持 AudioWorkletNode');
+    }
+
+    await audioCtx.audioWorklet.addModule(chrome.runtime.getURL('recorder-worklet.js'));
+
     sr = audioCtx.sampleRate;
 
     const micSrc = audioCtx.createMediaStreamSource(micStream);
@@ -74,19 +87,33 @@ async function start(){
       tabGain.connect(merger,0,1);
     }
 
-    dest = audioCtx.createMediaStreamDestination();
-    processor = audioCtx.createScriptProcessor(4096,2,2);
-    merger.connect(processor);
-    processor.connect(dest);
+    recorderNode = new AudioWorkletNode(audioCtx, 'recorder-processor', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      channelCount: 2,
+      channelCountMode: 'explicit',
+      channelInterpretation: 'speakers'
+    });
 
     resetBuffers();
-    processor.onaudioprocess = (e) => {
-      const L = e.inputBuffer.getChannelData(0);
-      const R = tabStream ? e.inputBuffer.getChannelData(1) : null;
-      leftChunks.push(new Float32Array(L));
-      rightChunks.push(new Float32Array(R || new Float32Array(L.length)));
-      totalSamples += L.length;
+
+    recorderNode.port.onmessage = (event) => {
+      const data = event.data || {};
+      const channels = data.channels;
+      if (!channels || !channels.length) return;
+      const left = channels[0] instanceof Float32Array ? channels[0] : new Float32Array(channels[0] || []);
+      const rightRaw = channels[1] instanceof Float32Array ? channels[1] : (channels[1] ? new Float32Array(channels[1]) : null);
+      leftChunks.push(left);
+      rightChunks.push(ensureRightChannelArray(rightRaw, left.length));
+      totalSamples += left.length;
     };
+
+    silentGain = audioCtx.createGain();
+    silentGain.gain.value = 0;
+
+    merger.connect(recorderNode);
+    recorderNode.connect(silentGain);
+    silentGain.connect(audioCtx.destination);
 
     btnStop.disabled=false; btnSave.disabled=true; btnUpload.disabled=true;
     setStatus(tabStream? '录音中…(Mic←左 / Tab←右)' : '录音中…(仅麦克风)');
@@ -94,17 +121,36 @@ async function start(){
     alert('启动失败：'+(e && e.message ? e.message : e));
     setStatus('失败');
     btnStart.disabled=false;
+    cleanupAudioGraph();
+  }
+}
+
+function cleanupAudioGraph(){
+  if (recorderNode) {
+    try { recorderNode.port.onmessage = null; recorderNode.disconnect(); } catch (_) {}
+    recorderNode = null;
+  }
+  if (silentGain) {
+    try { silentGain.disconnect(); } catch (_) {}
+    silentGain = null;
+  }
+  if (merger) {
+    try { merger.disconnect(); } catch (_) {}
+    merger = null;
+  }
+  if (audioCtx) {
+    try { audioCtx.close(); } catch (_) {}
+    audioCtx = null;
   }
 }
 
 function stop(){
   try{
-    if (processor) processor.disconnect();
-    if (merger) merger.disconnect();
-    if (dest) dest.disconnect();
-    if (audioCtx) audioCtx.close();
+    cleanupAudioGraph();
     [micStream, tabStream].forEach((s)=> s && s.getTracks().forEach((t)=> t.stop()));
   }finally{
+    micStream = null;
+    tabStream = null;
     btnStop.disabled=true; btnStart.disabled=false; btnSave.disabled=false; btnUpload.disabled=false;
     setStatus('已停止，待保存/上传');
   }
