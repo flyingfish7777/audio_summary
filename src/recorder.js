@@ -2,7 +2,6 @@ const statusText = document.querySelector('#statusText');
 const startBtn = document.querySelector('#startBtn');
 const stopBtn = document.querySelector('#stopBtn');
 const saveBtn = document.querySelector('#saveBtn');
-const audioSourceSelect = document.querySelector('#audioSource');
 const audioPlayerSection = document.querySelector('.player');
 const audioPlayer = document.querySelector('#audioPlayer');
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -15,48 +14,68 @@ if (!AudioContextClass || !navigator.mediaDevices) {
 class RecorderController {
   constructor() {
     this.audioContext = null;
-    this.sourceNode = null;
     this.processorNode = null;
-    this.mediaStream = null;
+    this.silenceNode = null;
+    this.microphoneSourceNode = null;
+    this.systemSourceNode = null;
+    this.microphoneStream = null;
+    this.systemStream = null;
+    this.activeStreams = [];
     this.sampleRate = 44100;
     this.buffers = [];
     this.state = 'idle';
     this.recordedBlob = null;
-    this.silenceNode = null;
   }
 
-  async start(sourceType = 'microphone') {
+  async start() {
     if (this.state === 'recording') {
       throw new Error('录音已经在进行中');
     }
 
-    this.mediaStream = await this.#createStream(sourceType);
     if (!AudioContextClass) {
       throw new Error('当前浏览器不支持 Web Audio API');
     }
 
-    this.audioContext = new AudioContextClass();
-    this.sampleRate = this.audioContext.sampleRate;
-    this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
-    this.buffers = [];
+    let microphoneStream;
+    let systemStream;
 
-    const bufferSize = 4096;
-    const channelCount = this.#detectChannelCount();
-    this.processorNode = this.audioContext.createScriptProcessor(bufferSize, channelCount, 1);
-    this.processorNode.onaudioprocess = (event) => {
-      const inputBuffer = event.inputBuffer;
-      const chunk = this.#mixToMono(inputBuffer);
-      this.buffers.push(chunk);
-    };
+    try {
+      ({ microphoneStream, systemStream } = await this.#createCombinedStream());
 
-    this.sourceNode.connect(this.processorNode);
-    this.silenceNode = this.audioContext.createGain();
-    this.silenceNode.gain.value = 0;
-    this.processorNode.connect(this.silenceNode);
-    this.silenceNode.connect(this.audioContext.destination);
+      this.audioContext = new AudioContextClass();
+      this.sampleRate = this.audioContext.sampleRate;
+      this.buffers = [];
 
-    this.state = 'recording';
-    this.recordedBlob = null;
+      const bufferSize = 4096;
+      this.processorNode = this.audioContext.createScriptProcessor(bufferSize, 2, 1);
+      this.processorNode.onaudioprocess = (event) => {
+        const inputBuffer = event.inputBuffer;
+        const chunk = this.#mixToMono(inputBuffer);
+        this.buffers.push(chunk);
+      };
+
+      this.microphoneSourceNode = this.audioContext.createMediaStreamSource(microphoneStream);
+      this.systemSourceNode = this.audioContext.createMediaStreamSource(systemStream);
+      this.microphoneSourceNode.connect(this.processorNode);
+      this.systemSourceNode.connect(this.processorNode);
+
+      this.silenceNode = this.audioContext.createGain();
+      this.silenceNode.gain.value = 0;
+      this.processorNode.connect(this.silenceNode);
+      this.silenceNode.connect(this.audioContext.destination);
+
+      this.microphoneStream = microphoneStream;
+      this.systemStream = systemStream;
+      this.activeStreams = [microphoneStream, systemStream];
+
+      this.state = 'recording';
+      this.recordedBlob = null;
+    } catch (error) {
+      this.#stopStream(microphoneStream);
+      this.#stopStream(systemStream);
+      this.#reset();
+      throw error;
+    }
   }
 
   async stop() {
@@ -66,8 +85,9 @@ class RecorderController {
 
     this.processorNode?.disconnect();
     this.silenceNode?.disconnect();
-    this.sourceNode?.disconnect();
-    this.mediaStream?.getTracks().forEach((track) => track.stop());
+    this.microphoneSourceNode?.disconnect();
+    this.systemSourceNode?.disconnect();
+    this.#stopActiveStreams();
 
     if (this.audioContext) {
       await this.audioContext.close();
@@ -90,7 +110,7 @@ class RecorderController {
     if (!this.recordedBlob) {
       throw new Error('请先完成录音');
     }
-    // TODO: 将 this.recordedBlob 发送到后端 API，并处理返回的 AI 总结结果。
+    // TODO: 将包含麦克风与系统音频的混合结果上传至后端 API，处理返回的 AI 总结。
     // 例如：
     // const formData = new FormData();
     // formData.append('file', this.recordedBlob, 'recording.wav');
@@ -104,57 +124,103 @@ class RecorderController {
 
   #reset() {
     this.audioContext = null;
-    this.sourceNode = null;
-    if (this.processorNode) {
-      this.processorNode.onaudioprocess = null;
-    }
     this.processorNode = null;
-    this.mediaStream = null;
+    this.silenceNode = null;
+    this.microphoneSourceNode = null;
+    this.systemSourceNode = null;
+    this.microphoneStream = null;
+    this.systemStream = null;
+    this.activeStreams = [];
     this.sampleRate = 44100;
     this.buffers = [];
     this.state = 'idle';
-    this.silenceNode = null;
   }
 
-  #detectChannelCount() {
-    if (this.sourceNode?.channelCount) {
-      return Math.min(this.sourceNode.channelCount, 2);
+  async #createCombinedStream() {
+    if (!navigator.mediaDevices?.getDisplayMedia || !navigator.mediaDevices?.getUserMedia) {
+      throw new Error('浏览器不支持同时捕获麦克风与系统音频。');
     }
-    const track = this.mediaStream?.getAudioTracks()[0];
-    const reported = track?.getSettings?.().channelCount;
-    return reported && reported > 0 ? Math.min(reported, 2) : 2;
-  }
 
-  async #createStream(sourceType) {
-    if (sourceType === 'system') {
-      if (!navigator.mediaDevices.getDisplayMedia) {
-        throw new Error('浏览器不支持采集系统或标签页音频');
-      }
+    let systemStream;
+    try {
       const displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 1 },
-        audio: { echoCancellation: false, noiseSuppression: false },
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          sampleRate: 44100,
+        },
       });
       const audioTracks = displayStream.getAudioTracks();
       if (audioTracks.length === 0) {
         displayStream.getTracks().forEach((track) => track.stop());
-        throw new Error('未检测到系统/标签页音频轨道');
+        throw new Error('未检测到系统或标签页的音频轨道。');
       }
-      // 移除视频轨道，仅保留音频
       displayStream.getVideoTracks().forEach((track) => track.stop());
-      return new MediaStream(audioTracks);
+      systemStream = new MediaStream(audioTracks);
+    } catch (error) {
+      throw new Error(this.#translateError(error, 'system'));
     }
 
-    if (!navigator.mediaDevices.getUserMedia) {
-      throw new Error('浏览器不支持麦克风录音');
+    let microphoneStream;
+    try {
+      microphoneStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 44100,
+        },
+      });
+    } catch (error) {
+      this.#stopStream(systemStream);
+      throw new Error(this.#translateError(error, 'microphone'));
     }
 
-    return navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        sampleRate: 44100,
-      },
-    });
+    return { microphoneStream, systemStream };
+  }
+
+  #translateError(error, type) {
+    const target = type === 'system' ? '系统音频' : '麦克风';
+    if (!error) {
+      return `无法获取${target}。`;
+    }
+
+    const name = error.name || '';
+    const message = (error.message || '').toLowerCase();
+
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      if (message.includes('dismissed')) {
+        return `用户取消了${target}权限请求，请重新点击“开始录制”并选择允许。`;
+      }
+      return `用户拒绝了${target}权限，请允许浏览器访问${target}。`;
+    }
+
+    if (name === 'NotFoundError') {
+      return type === 'system'
+        ? '未检测到可共享的系统或标签页音频，请确认所选窗口有音频输出。'
+        : '未检测到可用的麦克风设备，请检查连接后重试。';
+    }
+
+    if (name === 'AbortError' || name === 'NotReadableError') {
+      return `${target}设备被占用或不可用，请关闭其他应用后重试。`;
+    }
+
+    if (type === 'system' && name === 'TypeError') {
+      return '需要选择一个要共享的窗口或标签页才能采集系统音频。';
+    }
+
+    return error.message || `无法获取${target}。`;
+  }
+
+  #stopActiveStreams() {
+    this.activeStreams.forEach((stream) => this.#stopStream(stream));
+    this.activeStreams = [];
+  }
+
+  #stopStream(stream) {
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+    }
   }
 
   #mixToMono(inputBuffer) {
@@ -191,13 +257,13 @@ class RecorderController {
     view.setUint32(4, 36 + samples.length * 2, true);
     this.#writeString(view, 8, 'WAVE');
     this.#writeString(view, 12, 'fmt ');
-    view.setUint32(16, 16, true); // Subchunk1Size (16 for PCM)
-    view.setUint16(20, 1, true); // AudioFormat (1 = PCM)
-    view.setUint16(22, 1, true); // NumChannels
-    view.setUint32(24, sampleRate, true); // SampleRate
-    view.setUint32(28, sampleRate * 2, true); // ByteRate (SampleRate * NumChannels * BitsPerSample/8)
-    view.setUint16(32, 2, true); // BlockAlign (NumChannels * BitsPerSample/8)
-    view.setUint16(34, 16, true); // BitsPerSample
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
     this.#writeString(view, 36, 'data');
     view.setUint32(40, samples.length * 2, true);
 
@@ -226,11 +292,11 @@ startBtn.addEventListener('click', async () => {
   startBtn.disabled = true;
   stopBtn.disabled = true;
   saveBtn.disabled = true;
-  statusText.textContent = '正在请求音频权限…';
+  statusText.textContent = '正在请求麦克风和系统音频权限…';
 
   try {
-    await recorder.start(audioSourceSelect.value);
-    statusText.textContent = '录音中…点击“结束录制”停止。';
+    await recorder.start();
+    statusText.textContent = '录音中…麦克风与系统音频已开始混合。';
     stopBtn.disabled = false;
   } catch (error) {
     console.error(error);

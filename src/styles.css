@@ -36,16 +36,11 @@ h1 {
   margin-bottom: 24px;
 }
 
-label {
-  font-weight: 600;
-}
-
-select {
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid #b0c4de;
-  background: white;
-  font-size: 16px;
+.controls .hint {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #334155;
 }
 
 .button-group {
