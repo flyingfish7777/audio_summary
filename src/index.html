@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>音频录制示例</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>音频录制示例</h1>
+    <section class="controls">
+      <label for="audioSource">音频来源：</label>
+      <select id="audioSource">
+        <option value="microphone">麦克风（输入音频）</option>
+        <option value="system">当前标签页/系统（输出音频）</option>
+      </select>
+      <div class="button-group">
+        <button id="startBtn">开始录制</button>
+        <button id="stopBtn" disabled>结束录制</button>
+        <button id="saveBtn" disabled>保存为 WAV</button>
+      </div>
+    </section>
+    <section class="status">
+      <p id="statusText">尚未开始录音。</p>
+    </section>
+    <section class="player" hidden>
+      <h2>预览</h2>
+      <audio id="audioPlayer" controls></audio>
+    </section>
+  </main>
+  <script type="module" src="recorder.js"></script>
+</body>
+</html>
